@@ -19,20 +19,28 @@ namespace TelegramBridge
                     "--rabbit-host", 
                     description: "RabbitMQ service host to connect to"),
                 new Option<string>(
-                    "--rabbit-queue", 
-                    description: "RabbitMQ queue name")
+                    "--rabbit-queue-in", 
+                    description: "RabbitMQ queue name where to put messages from telegramm"),
+                new Option<string>(
+                    "--rabbit-queue-out", 
+                    description: "RabbitMQ queue name to read from to send to telegramm")
             };
 
             rootCommand.Description = "Telegram bridge service to connect telegram to RabbitMQ";
-
+            
             // Note that the parameters of the handler method are matched according to the names of the options
-            rootCommand.Handler = CommandHandler.Create<string, string, string>((telegramToken, rabbitHost, rabbitQueue) =>
+            rootCommand.Handler = CommandHandler.Create<string, string, string, string>((telegramToken, rabbitHost, rabbitQueueIn, rabbitQueueOut) =>
             {
                 Console.WriteLine($"The value for --telegram-token is: {telegramToken}");
 
                 var bridge = new Bridge(telegramToken);
                 var cancellationTokenSource = new CancellationTokenSource();
-                bridge.ConnectTo(cancellationTokenSource.Token, rabbitHost, rabbitQueue);
+                bridge.ConnectTo(
+                    cancellationToken: cancellationTokenSource.Token, 
+                    rabbitMQHost: rabbitHost, 
+                    queueNameIn: rabbitQueueIn, 
+                    queueNameOut: rabbitQueueOut
+                );
 
                 while (Console.ReadLine() != "exit") 
                 { 
