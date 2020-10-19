@@ -28,7 +28,11 @@ namespace TelegramBridge
                 var cancellationTokenSource = new CancellationTokenSource();
                 bridge.ConnectTo(cancellationTokenSource.Token, "");
 
-                Console.ReadLine();
+                while (Console.ReadLine() != "exit") 
+                { 
+                    Console.WriteLine("Type exit to exit");
+                }
+
                 cancellationTokenSource.Cancel();
             });
 
