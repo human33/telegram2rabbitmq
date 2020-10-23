@@ -79,7 +79,12 @@ namespace TelegramBridge
             Console.WriteLine(
                 $"Received a text message ({e.Message.Text}) in chat {e.Message.Chat.Id}.");
 
-            string jsonMessage = JsonSerializer.Serialize(e.Message);
+            var message = new InMessage(
+                text: e.Message.Text,
+                chatId: e.Message.Chat.Id.ToString(),
+                userLogin: e.Message.Chat.Username
+            );
+            string jsonMessage = JsonSerializer.Serialize(message);
             byte[] bytesMessage = System.Text.Encoding.UTF8.GetBytes(jsonMessage);
 
             Channel.BasicPublish(
