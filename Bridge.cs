@@ -57,7 +57,7 @@ namespace TelegramBridge
             var factory = new ConnectionFactory() { HostName = rabbitMQHost };
             ConnectionIn = factory.CreateConnection();
             ChannelIn = ConnectionIn.CreateModel();
-            QueueNameOut = queueNameOut;
+            QueueNameIn = queueNameIn;
 
             ChannelIn.QueueDeclare(
                 queue: QueueNameIn,
@@ -77,7 +77,7 @@ namespace TelegramBridge
             ChannelOut = ConnectionOut.CreateModel();
             QueueNameOut = queueNameOut;
 
-            ChannelIn.QueueDeclare(
+            ChannelOut.QueueDeclare(
                 queue: QueueNameOut,
                 durable: true,
                 exclusive: false,
@@ -89,6 +89,11 @@ namespace TelegramBridge
 
             consumer.Received += async (model, ea) =>
             {    
+
+                log.Debug(
+                    $"Received a packet from {QueueNameOut}"
+                );
+
                 var body = ea.Body.ToArray();
                 var messageText = System.Text.Encoding.UTF8.GetString(body);
                 OutMessage message = JsonSerializer.Deserialize<OutMessage>(messageText);
@@ -100,10 +105,16 @@ namespace TelegramBridge
 
                 await BotClient.SendTextMessageAsync(
                     chatId: new Telegram.Bot.Types.ChatId(message.ChatId),
-                    text: "Hi! I will answer you asap. "+ 
-                        $"({ChannelIn.ConsumerCount(QueueNameIn)} peer(s) online)"
+                    text: message.Text
                 );
             };
+
+			ChannelOut.BasicConsume(
+				queue: QueueNameOut,
+                autoAck: true,
+                consumer: consumer
+			);
+
 
             log.Debug("Connected to RabbitMQ out queue.");
         }
@@ -149,6 +160,11 @@ namespace TelegramBridge
                 routingKey: QueueNameIn,
                 basicProperties: null,
                 body: bytesMessage
+            );
+
+            log.Debug(
+                $"Sent message to {QueueNameIn}, "+
+                $"json: {jsonMessage}."
             );
 
             await BotClient.SendTextMessageAsync(

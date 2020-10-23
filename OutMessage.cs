@@ -10,5 +10,7 @@ namespace TelegramBridge
             Text = text;
             ChatId = chatId;
         }
+
+        public OutMessage() {}
     }
 }
