@@ -5,28 +5,40 @@ using Telegram.Bot.Args;
 
 using RabbitMQ.Client;
 using System.Text.Json;
+using RabbitMQ.Client.Events;
+using NLog;
 
 namespace TelegramBridge
 {
     class Bridge : IDisposable
     {
         private Telegram.Bot.TelegramBotClient BotClient;
+        Logger log = LogManager.GetCurrentClassLogger();
         
         public Bridge(string telegramToken) 
         {
             BotClient = new Telegram.Bot.TelegramBotClient(telegramToken);
         }
 
-        private IConnection Connection { get; set; }
-        private IModel Channel { get; set; }
-        private string QueueName;
+        private IConnection ConnectionIn { get; set; }
+        private IModel ChannelIn { get; set; }
+        private string QueueNameIn;
+
+
+        
+        private IConnection ConnectionOut { get; set; }
+        private IModel ChannelOut { get; set; }
+        private string QueueNameOut;
 
         public void ConnectTo(
             CancellationToken cancellationToken, 
             string rabbitMQHost, 
-            string queueName
+            string queueNameIn,
+            string queueNameOut
             ) 
         {
+            log.Debug("Try to connect to telegramm...");
+
             // listen to telegram messages
             BotClient.OnMessage += HandleTelegramMessage;
 
@@ -36,36 +48,79 @@ namespace TelegramBridge
                 cancellationToken
             );
 
-            // connect to rabbitMQ
-            var factory = new ConnectionFactory() { HostName = rabbitMQHost };
-            Connection = factory.CreateConnection();
-            Channel = Connection.CreateModel();
-            QueueName = queueName;
+            log.Debug("Connected to Telegram.");
 
-            Channel.QueueDeclare(
-                queue: QueueName,
+
+            // connect to RabbitMQ out queue
+            log.Debug("Try to connect to RabbitMQ in queue...");
+
+            var factory = new ConnectionFactory() { HostName = rabbitMQHost };
+            ConnectionIn = factory.CreateConnection();
+            ChannelIn = ConnectionIn.CreateModel();
+            QueueNameOut = queueNameOut;
+
+            ChannelIn.QueueDeclare(
+                queue: QueueNameIn,
                 durable: true,
                 exclusive: false,
                 autoDelete: false,
                 arguments: null
             );
+
+            log.Debug("Connected to RabbitMQ in queue.");
+
+            // connect to RabbitMQ out queue
+            
+            log.Debug("Try to connect to RabbitMQ out queue...");
+
+            ConnectionOut = factory.CreateConnection();
+            ChannelOut = ConnectionOut.CreateModel();
+            QueueNameOut = queueNameOut;
+
+            ChannelIn.QueueDeclare(
+                queue: QueueNameOut,
+                durable: true,
+                exclusive: false,
+                autoDelete: false,
+                arguments: null
+            );
+
+            var consumer = new EventingBasicConsumer(ChannelOut);
+
+            consumer.Received += async (model, ea) =>
+            {    
+                var body = ea.Body.ToArray();
+                var messageText = System.Text.Encoding.UTF8.GetString(body);
+                OutMessage message = JsonSerializer.Deserialize<OutMessage>(messageText);
+                
+                log.Debug(
+                    "Received a text message from RabbitMQ"+
+                    $" ({message.Text}) in chat {message.ChatId}."
+                );
+
+                await BotClient.SendTextMessageAsync(
+                    chatId: new Telegram.Bot.Types.ChatId(message.ChatId),
+                    text: "Hi! I will answer you asap. "+ 
+                        $"({ChannelIn.ConsumerCount(QueueNameIn)} peer(s) online)"
+                );
+            };
+
+            log.Debug("Connected to RabbitMQ out queue.");
         }
 
         public void Dispose()
         {
-            if (Connection != null) 
+            if (ChannelIn != null) 
             {
-                Connection.Dispose();
-                Connection = null;
+                ChannelIn.Dispose();
+                ChannelIn = null;
             }
 
-
-            if (Channel != null) 
+            if (ConnectionIn != null) 
             {
-                Channel.Dispose();
-                Channel = null;
+                ConnectionIn.Dispose();
+                ConnectionIn = null;
             }
-
             
             if (BotClient != null) 
             {
@@ -76,8 +131,10 @@ namespace TelegramBridge
 
         public async void HandleTelegramMessage(object sender, MessageEventArgs e)
         {
-            Console.WriteLine(
-                $"Received a text message ({e.Message.Text}) in chat {e.Message.Chat.Id}.");
+            log.Debug(
+                "Received a text message from telegramm"+
+                $" ({e.Message.Text}) in chat {e.Message.Chat.Id}."
+            );
 
             var message = new InMessage(
                 text: e.Message.Text,
@@ -87,16 +144,17 @@ namespace TelegramBridge
             string jsonMessage = JsonSerializer.Serialize(message);
             byte[] bytesMessage = System.Text.Encoding.UTF8.GetBytes(jsonMessage);
 
-            Channel.BasicPublish(
+            ChannelIn.BasicPublish(
                 exchange: "",
-                routingKey: QueueName,
+                routingKey: QueueNameIn,
                 basicProperties: null,
                 body: bytesMessage
             );
 
             await BotClient.SendTextMessageAsync(
                 chatId: e.Message.Chat,
-                text:   "I wish you luck!"
+                text: "Hi! I will answer you asap. "+ 
+                    $"({ChannelIn.ConsumerCount(QueueNameIn)} peer(s) online)"
             );
         }
     }
