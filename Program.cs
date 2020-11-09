@@ -23,17 +23,21 @@ namespace TelegramBridge
                     description: "RabbitMQ queue name where to put messages from telegramm"),
                 new Option<string>(
                     "--rabbit-queue-out", 
-                    description: "RabbitMQ queue name to read from to send to telegramm")
+                    description: "RabbitMQ queue name to read from to send to telegramm"),
+                new Option<string>(
+                    "--mongo-connection", 
+                    description: "")
             };
 
             rootCommand.Description = "Telegram bridge service to connect telegram to RabbitMQ";
             
             // Note that the parameters of the handler method are matched according to the names of the options
-            rootCommand.Handler = CommandHandler.Create<string, string, string, string>((telegramToken, rabbitHost, rabbitQueueIn, rabbitQueueOut) =>
+            rootCommand.Handler = CommandHandler.Create<string, string, string, string, string>(
+                (telegramToken, rabbitHost, rabbitQueueIn, rabbitQueueOut, mongoConnection) =>
             {
                 Console.WriteLine($"The value for --telegram-token is: {telegramToken}");
 
-                var bridge = new Bridge(telegramToken);
+                var bridge = new Bridge(telegramToken, mongoConnection);
                 var cancellationTokenSource = new CancellationTokenSource();
                 bridge.ConnectTo(
                     cancellationToken: cancellationTokenSource.Token, 

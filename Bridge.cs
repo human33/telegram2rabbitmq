@@ -7,6 +7,8 @@ using RabbitMQ.Client;
 using System.Text.Json;
 using RabbitMQ.Client.Events;
 using NLog;
+using MongoDB.Driver;
+using MongoDB.Bson;
 
 namespace TelegramBridge
 {
@@ -15,9 +17,10 @@ namespace TelegramBridge
         private Telegram.Bot.TelegramBotClient BotClient;
         Logger log = LogManager.GetCurrentClassLogger();
         
-        public Bridge(string telegramToken) 
+        public Bridge(string telegramToken, string mongoConnectionString) 
         {
             BotClient = new Telegram.Bot.TelegramBotClient(telegramToken);
+            MongoConnectionString = mongoConnectionString;
         }
 
         private IConnection ConnectionIn { get; set; }
@@ -28,6 +31,8 @@ namespace TelegramBridge
         
         private IConnection ConnectionOut { get; set; }
         private IModel ChannelOut { get; set; }
+        public string MongoConnectionString { get; }
+
         private string QueueNameOut;
 
         public void ConnectTo(
@@ -100,8 +105,34 @@ namespace TelegramBridge
                 
                 log.Debug(
                     "Received a text message from RabbitMQ"+
-                    $" ({message.Text}) in chat {message.ChatId}."
+                    $" ({message.Text}), chat {message.ChatId}, login {message.UserLogin}."
                 );
+
+                if (message.ChatId == default && message.UserLogin != default) 
+                {
+                    // try to get chat id by user login
+                    
+                    MongoClient dbClient = new MongoClient(MongoConnectionString);
+                    IMongoDatabase db = dbClient.GetDatabase("bridge");
+                    var collection = db.GetCollection<BsonDocument>("tg_users_chats");
+                    var collectionFilter = new BsonDocument() {{"_id", message.UserLogin}};
+                    BsonDocument loginInfo = collection.Find(collectionFilter).FirstOrDefault();
+
+                    if (loginInfo != null)
+                    {
+                        message.ChatId = loginInfo["chat_id"].AsString;
+                    }
+                    else 
+                    {
+                        log.Warn($"Chat not found by login {message.UserLogin}");
+                    }
+                }
+
+                if (message.ChatId == default) 
+                {
+                    log.Warn("Cannot send a message without chat id (it's required)");
+                    return;
+                }
 
                 await BotClient.SendTextMessageAsync(
                     chatId: new Telegram.Bot.Types.ChatId(message.ChatId),
@@ -146,6 +177,24 @@ namespace TelegramBridge
                 "Received a text message from telegramm"+
                 $" ({e.Message.Text}) in chat {e.Message.Chat.Id}."
             );
+
+
+            // save chat id to database to lookup chat id by user name
+
+            MongoClient dbClient = new MongoClient(MongoConnectionString);
+            IMongoDatabase db = dbClient.GetDatabase("bridge");
+            var collection = db.GetCollection<BsonDocument>("tg_users_chats");
+            var filter = new BsonDocument() {{"_id", e.Message.Chat.Username }};
+            var data = new BsonDocument() {
+                {"_id", e.Message.Chat.Username },
+                {"chat_id", e.Message.Chat.Id.ToString() }
+            };
+            var options = new ReplaceOptions() {
+                IsUpsert = true
+            };
+            await collection.ReplaceOneAsync(filter: filter, replacement: data, options: options);
+
+
 
             var message = new InMessage(
                 text: e.Message.Text,

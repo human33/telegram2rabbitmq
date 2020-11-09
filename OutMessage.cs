@@ -4,6 +4,7 @@ namespace TelegramBridge
     {
         public string Text {get;set;}
         public string ChatId {get;set;}
+        public string UserLogin {get;set;}
 
         public OutMessage(string text, string chatId)
         {
