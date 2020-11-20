@@ -54,7 +54,8 @@ namespace TelegramBridge
                             queueNameOut: rabbitQueueOut
                         );
                     } 
-                    catch (RabbitMQ.Client.Exceptions.BrokerUnreachableException e)
+                    // TODO: catch appropriate exception
+                    catch (System.Exception e)
                     {
                         Console.WriteLine($"RabbitMQ is unreachable (id:{rabbitHost})");
                         await Task.Delay(1000);
