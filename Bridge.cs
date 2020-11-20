@@ -35,6 +35,7 @@ namespace TelegramBridge
 
         private string QueueNameOut;
 
+// TODO: reconnect in case of network failure
         public void ConnectTo(
             CancellationToken cancellationToken, 
             string rabbitMQHost, 

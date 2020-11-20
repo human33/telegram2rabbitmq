@@ -3,6 +3,7 @@ using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace TelegramBridge
 {
@@ -39,12 +40,27 @@ namespace TelegramBridge
 
                 var bridge = new Bridge(telegramToken, mongoConnection);
                 var cancellationTokenSource = new CancellationTokenSource();
-                bridge.ConnectTo(
-                    cancellationToken: cancellationTokenSource.Token, 
-                    rabbitMQHost: rabbitHost, 
-                    queueNameIn: rabbitQueueIn, 
-                    queueNameOut: rabbitQueueOut
-                );
+                
+                while(true)
+                {
+                    try 
+                    {
+                        Console.WriteLine($"Trying to connect to RabbitMQ ({rabbitHost})");
+
+                        bridge.ConnectTo(
+                            cancellationToken: cancellationTokenSource.Token, 
+                            rabbitMQHost: rabbitHost, 
+                            queueNameIn: rabbitQueueIn, 
+                            queueNameOut: rabbitQueueOut
+                        );
+                    } 
+                    catch (RabbitMQ.Client.Exceptions.BrokerUnreachableException e)
+                    {
+                        Console.WriteLine($"RabbitMQ is unreachable (id:{rabbitHost})");
+                        Task.Delay(1000);
+                        continue;
+                    }
+                }
 
                 while (Console.ReadLine() != "exit") 
                 { 
