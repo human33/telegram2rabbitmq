@@ -205,12 +205,15 @@ namespace TelegramBridge
             string jsonMessage = JsonSerializer.Serialize(message);
             byte[] bytesMessage = System.Text.Encoding.UTF8.GetBytes(jsonMessage);
 
-            ChannelIn.BasicPublish(
-                exchange: "",
-                routingKey: QueueNameIn,
-                basicProperties: null,
-                body: bytesMessage
-            );
+            lock (ChannelIn)
+            {
+                ChannelIn.BasicPublish(
+                    exchange: "",
+                    routingKey: QueueNameIn,
+                    basicProperties: null,
+                    body: bytesMessage
+                );
+            }
 
             log.Debug(
                 $"Sent message to {QueueNameIn}, "+
