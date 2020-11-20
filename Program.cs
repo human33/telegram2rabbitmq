@@ -34,7 +34,7 @@ namespace TelegramBridge
             
             // Note that the parameters of the handler method are matched according to the names of the options
             rootCommand.Handler = CommandHandler.Create<string, string, string, string, string>(
-                (telegramToken, rabbitHost, rabbitQueueIn, rabbitQueueOut, mongoConnection) =>
+                async (telegramToken, rabbitHost, rabbitQueueIn, rabbitQueueOut, mongoConnection) =>
             {
                 Console.WriteLine($"The value for --telegram-token is: {telegramToken}");
 
@@ -57,9 +57,11 @@ namespace TelegramBridge
                     catch (RabbitMQ.Client.Exceptions.BrokerUnreachableException e)
                     {
                         Console.WriteLine($"RabbitMQ is unreachable (id:{rabbitHost})");
-                        Task.Delay(1000);
+                        await Task.Delay(1000);
                         continue;
                     }
+
+                    break;
                 }
 
                 while (Console.ReadLine() != "exit") 
