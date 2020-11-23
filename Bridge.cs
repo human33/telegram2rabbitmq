@@ -67,7 +67,6 @@ namespace TelegramBridge
             string queueNameOut
             ) 
         {
-            ConnectToTelegram(cancellationToken);
 
             // connect to RabbitMQ out queue
             log.Debug("Try to connect to RabbitMQ in queue...");
@@ -161,6 +160,8 @@ namespace TelegramBridge
 
 
             log.Debug("Connected to RabbitMQ out queue.");
+
+            ConnectToTelegram(cancellationToken);
         }
 
         public void Dispose()
