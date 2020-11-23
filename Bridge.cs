@@ -35,6 +35,30 @@ namespace TelegramBridge
 
         private string QueueNameOut;
 
+        private bool SubscribedToTelegramNewMessage = false;
+
+
+        protected void ConnectToTelegram(CancellationToken cancellationToken)
+        {
+            if (!SubscribedToTelegramNewMessage) 
+            {
+                log.Debug("Try to connect to telegramm...");
+
+                // listen to telegram messages
+                BotClient.OnMessage += HandleTelegramMessage;
+
+                BotClient.StartReceiving(
+                    // Telegram.Bot.Types.Enums.UpdateType.Message,
+                    null,
+                    cancellationToken
+                );
+
+                SubscribedToTelegramNewMessage = true;
+                log.Debug("Connected to Telegram.");
+            }
+        }
+
+
 // TODO: reconnect in case of network failure
         public void ConnectTo(
             CancellationToken cancellationToken, 
@@ -43,19 +67,7 @@ namespace TelegramBridge
             string queueNameOut
             ) 
         {
-            log.Debug("Try to connect to telegramm...");
-
-            // listen to telegram messages
-            BotClient.OnMessage += HandleTelegramMessage;
-
-            BotClient.StartReceiving(
-                // Telegram.Bot.Types.Enums.UpdateType.Message,
-                null,
-                cancellationToken
-            );
-
-            log.Debug("Connected to Telegram.");
-
+            ConnectToTelegram(cancellationToken);
 
             // connect to RabbitMQ out queue
             log.Debug("Try to connect to RabbitMQ in queue...");
@@ -159,10 +171,10 @@ namespace TelegramBridge
                 ChannelIn = null;
             }
 
-            if (ConnectionIn != null) 
+            if (ConnectionOut != null) 
             {
-                ConnectionIn.Dispose();
-                ConnectionIn = null;
+                ConnectionOut.Dispose();
+                ConnectionOut = null;
             }
             
             if (BotClient != null) 
