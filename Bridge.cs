@@ -195,49 +195,59 @@ namespace TelegramBridge
 
             // save chat id to database to lookup chat id by user name
 
-            MongoClient dbClient = new MongoClient(MongoConnectionString);
-            IMongoDatabase db = dbClient.GetDatabase("bridge");
-            var collection = db.GetCollection<BsonDocument>("tg_users_chats");
-            var filter = new BsonDocument() {{"_id", e.Message.Chat.Username }};
-            var data = new BsonDocument() {
-                {"_id", e.Message.Chat.Username },
-                {"chat_id", e.Message.Chat.Id.ToString() }
-            };
-            var options = new ReplaceOptions() {
-                IsUpsert = true
-            };
-            await collection.ReplaceOneAsync(filter: filter, replacement: data, options: options);
-
-
-
-            var message = new InMessage(
-                text: e.Message.Text,
-                chatId: e.Message.Chat.Id.ToString(),
-                userLogin: e.Message.Chat.Username
-            );
-            string jsonMessage = JsonSerializer.Serialize(message);
-            byte[] bytesMessage = System.Text.Encoding.UTF8.GetBytes(jsonMessage);
-
-            lock (ChannelIn)
+            try 
             {
-                ChannelIn.BasicPublish(
-                    exchange: "",
-                    routingKey: QueueNameIn,
-                    basicProperties: null,
-                    body: bytesMessage
+                MongoClient dbClient = new MongoClient(MongoConnectionString);
+                IMongoDatabase db = dbClient.GetDatabase("bridge");
+                var collection = db.GetCollection<BsonDocument>("tg_users_chats");
+                var filter = new BsonDocument() {{"_id", e.Message.Chat.Username }};
+                var data = new BsonDocument() {
+                    {"_id", e.Message.Chat.Username },
+                    {"chat_id", e.Message.Chat.Id.ToString() }
+                };
+                var options = new ReplaceOptions() {
+                    IsUpsert = true
+                };
+                await collection.ReplaceOneAsync(filter: filter, replacement: data, options: options);
+
+
+
+                var message = new InMessage(
+                    text: e.Message.Text,
+                    chatId: e.Message.Chat.Id.ToString(),
+                    userLogin: e.Message.Chat.Username
+                );
+                string jsonMessage = JsonSerializer.Serialize(message);
+                byte[] bytesMessage = System.Text.Encoding.UTF8.GetBytes(jsonMessage);
+
+                lock (ChannelIn)
+                {
+                    ChannelIn.BasicPublish(
+                        exchange: "",
+                        routingKey: QueueNameIn,
+                        basicProperties: null,
+                        body: bytesMessage
+                    );
+                }
+
+                log.Debug(
+                    $"Sent message to {QueueNameIn}, "+
+                    $"json: {jsonMessage}."
+                );
+
+                await BotClient.SendTextMessageAsync(
+                    chatId: e.Message.Chat,
+                    text: "Hi! I will answer you asap. "+ 
+                        $"({ChannelIn.ConsumerCount(QueueNameIn)} peer(s) online)"
                 );
             }
-
-            log.Debug(
-                $"Sent message to {QueueNameIn}, "+
-                $"json: {jsonMessage}."
-            );
-
-            await BotClient.SendTextMessageAsync(
-                chatId: e.Message.Chat,
-                text: "Hi! I will answer you asap. "+ 
-                    $"({ChannelIn.ConsumerCount(QueueNameIn)} peer(s) online)"
-            );
+            catch (System.Exception exception) 
+            {
+                log.Error(
+                    "Exception while handling telegram message", 
+                    exception.ToString()
+                );
+            }
         }
     }
 }
