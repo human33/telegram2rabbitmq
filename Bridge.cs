@@ -69,7 +69,7 @@ namespace TelegramBridge
         {
 
             // connect to RabbitMQ out queue
-            log.Debug("Try to connect to RabbitMQ in queue...");
+            log.Debug($"Try to connect to RabbitMQ in queue ({queueNameIn})...");
 
             var factory = new ConnectionFactory() { HostName = rabbitMQHost };
             ConnectionIn = factory.CreateConnection();
@@ -88,7 +88,7 @@ namespace TelegramBridge
 
             // connect to RabbitMQ out queue
             
-            log.Debug("Try to connect to RabbitMQ out queue...");
+            log.Debug($"Try to connect to RabbitMQ out queue({queueNameOut})...");
 
             ConnectionOut = factory.CreateConnection();
             ChannelOut = ConnectionOut.CreateModel();

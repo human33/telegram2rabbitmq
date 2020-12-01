@@ -65,7 +65,7 @@ namespace TelegramBridge
                     break;
                 }
 
-                while (Console.ReadLine() != "exit") 
+                while (Console.ReadLine() != "exit") { }
                 cancellationTokenSource.Cancel();
             });
 
