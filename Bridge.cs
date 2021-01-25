@@ -9,40 +9,105 @@ using RabbitMQ.Client.Events;
 using NLog;
 using MongoDB.Driver;
 using MongoDB.Bson;
+using Prometheus;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using System.Threading.Tasks;
 
 namespace TelegramBridge
 {
-    class Bridge : IDisposable
+    class Bridge : IDisposable, IHostedService
     {
-        private Telegram.Bot.TelegramBotClient BotClient;
-        Logger log = LogManager.GetCurrentClassLogger();
-        
-        public Bridge(string telegramToken, string mongoConnectionString) 
+        CancellationTokenSource workerCancellationTokenSource = new CancellationTokenSource();
+        private ILogger<Worker> _logger;
+        private BridgeOptions _options;
+
+        public Task StartAsync(CancellationToken cancellationToken)
         {
-            BotClient = new Telegram.Bot.TelegramBotClient(telegramToken);
-            MongoConnectionString = mongoConnectionString;
+            return Task.Run(async () => 
+            {   
+                // try to connect in the loop
+                while(true)
+                {
+                    if (workerCancellationTokenSource.Token.IsCancellationRequested) 
+                    {
+                        _logger.LogInformation("Cancellation reqiested, stopping...");
+                        break;
+                    }
+
+                    try 
+                    {
+                        _logger.LogInformation($"Trying to connect to RabbitMQ ({_options.RabbitHost})");
+
+                        this.ConnectTo(
+                            cancellationToken: cancellationToken, 
+                            rabbitMQHost: _options.RabbitHost, 
+                            queueNameIn: _options.RabbitQueueIn, 
+                            queueNameOut: _options.RabbitQueueOut
+                        );
+                    }
+                    catch (System.Exception e)
+                    {
+                        _logger.LogInformation(e, $"RabbitMQ is unreachable (id:{_options.RabbitHost})");
+                        await Task.Delay(1000);
+                        continue;
+                    }
+
+                    break;
+                }
+            });
+        }
+
+        private Telegram.Bot.TelegramBotClient BotClient;
+
+        public Bridge(ILogger<Worker> logger, BridgeOptions options) 
+        {
+            _logger = logger;
+            _options = options;
+            
+            BotClient = new Telegram.Bot.TelegramBotClient(_options.TelegramToken);
+
+            receivedFromBroker = Metrics.CreateCounter(
+                "bridge_received_from_broker",
+                "Messages received from broker's \"out\" queue"
+            );
+
+            sentToTelegram = Metrics.CreateCounter(
+                "bridge_sent_to_telegram",
+                "Messages sent to Telegram from broker's \"out\" queue"
+            );
+
+            receivedFromTelegram = Metrics.CreateCounter(
+                "bridge_received_from_telegram",
+                "Messages received from Telegram"
+            );
+
+            sentToBroker = Metrics.CreateCounter(
+                "bridge_sent_to_broker",
+                "Messages sent to broker's \"in\" queue"
+            );
         }
 
         private IConnection ConnectionIn { get; set; }
         private IModel ChannelIn { get; set; }
-        private string QueueNameIn;
 
 
-        
+
         private IConnection ConnectionOut { get; set; }
         private IModel ChannelOut { get; set; }
-        public string MongoConnectionString { get; }
 
-        private string QueueNameOut;
+        private Counter receivedFromBroker;
+        private Counter sentToTelegram;
 
         private bool SubscribedToTelegramNewMessage = false;
-
+        private Counter receivedFromTelegram;
+        private Counter sentToBroker;
 
         protected void ConnectToTelegram(CancellationToken cancellationToken)
         {
-            if (!SubscribedToTelegramNewMessage) 
+            if (!SubscribedToTelegramNewMessage)
             {
-                log.Debug("Try to connect to telegramm...");
+                _logger.LogDebug("Trying to connect to telegramm...");
 
                 // listen to telegram messages
                 BotClient.OnMessage += HandleTelegramMessage;
@@ -54,131 +119,168 @@ namespace TelegramBridge
                 );
 
                 SubscribedToTelegramNewMessage = true;
-                log.Debug("Connected to Telegram.");
+                _logger.LogDebug("Connected to Telegram.");
+            }
+            else 
+            {
+                _logger.LogDebug("Already connected to Telegram.");
             }
         }
 
 
-// TODO: reconnect in case of network failure
+        // TODO: reconnect in case of network failure
         public void ConnectTo(
-            CancellationToken cancellationToken, 
-            string rabbitMQHost, 
-            string queueNameIn,
-            string queueNameOut
-            ) 
+            CancellationToken cancellationToken
+            )
         {
 
-            // connect to RabbitMQ out queue
-            log.Debug($"Try to connect to RabbitMQ in queue ({queueNameIn})...");
-
-            var factory = new ConnectionFactory() { HostName = rabbitMQHost };
-            ConnectionIn = factory.CreateConnection();
-            ChannelIn = ConnectionIn.CreateModel();
-            QueueNameIn = queueNameIn;
-
-            ChannelIn.QueueDeclare(
-                queue: QueueNameIn,
-                durable: true,
-                exclusive: false,
-                autoDelete: false,
-                arguments: null
-            );
-
-            log.Debug("Connected to RabbitMQ in queue.");
+            _logger.LogDebug($"Connectiong to services...");
 
             // connect to RabbitMQ out queue
-            
-            log.Debug($"Try to connect to RabbitMQ out queue({queueNameOut})...");
 
-            ConnectionOut = factory.CreateConnection();
-            ChannelOut = ConnectionOut.CreateModel();
-            QueueNameOut = queueNameOut;
+            var factory = new ConnectionFactory() { HostName = _options.RabbitHost };
 
-            ChannelOut.QueueDeclare(
-                queue: QueueNameOut,
-                durable: true,
-                exclusive: false,
-                autoDelete: false,
-                arguments: null
-            );
-
-            var consumer = new EventingBasicConsumer(ChannelOut);
-
-            consumer.Received += async (model, ea) =>
-            {    
-
-                log.Debug(
-                    $"Received a packet from {QueueNameOut}"
-                );
-
-                var body = ea.Body.ToArray();
-                var messageText = System.Text.Encoding.UTF8.GetString(body);
-                OutMessage message = JsonSerializer.Deserialize<OutMessage>(messageText);
+            if (ConnectionIn == null || !ConnectionIn.IsOpen || 
+                ChannelIn == null || !ChannelIn.IsOpen)
+            {
+                _logger.LogDebug($"Try to connect to RabbitMQ in queue ({_options.RabbitQueueIn})...");
                 
-                log.Debug(
-                    "Received a text message from RabbitMQ"+
-                    $" ({message.Text}), chat {message.ChatId}, login {message.UserLogin}."
+                ConnectionIn = factory.CreateConnection();
+
+                ConnectionIn.ConnectionShutdown += (model, ea) => 
+                    ConnectTo(workerCancellationTokenSource.Token);
+
+                ChannelIn = ConnectionIn.CreateModel();
+
+                ChannelIn.QueueDeclare(
+                    queue: _options.RabbitQueueIn,
+                    durable: true,
+                    exclusive: false,
+                    autoDelete: false,
+                    arguments: null
+                );
+                
+                _logger.LogDebug("Connected to RabbitMQ in queue.");
+            }
+            else 
+            {
+                _logger.LogDebug("Connection to RabbitMQ in queue is already opened.");
+            }
+
+
+            // connect to RabbitMQ out queue
+
+            if (ConnectionOut == null || !ConnectionOut.IsOpen || 
+                ChannelOut == null || !ChannelOut.IsOpen) 
+            {
+                _logger.LogDebug($"Try to connect to RabbitMQ out queue({_options.RabbitQueueOut})...");
+
+                ConnectionOut = factory.CreateConnection();
+
+                ConnectionOut.ConnectionShutdown += (model, ea) => 
+                    ConnectTo(workerCancellationTokenSource.Token);
+
+                ChannelOut = ConnectionOut.CreateModel();
+
+                ChannelOut.QueueDeclare(
+                    queue: _options.RabbitQueueOut,
+                    durable: true,
+                    exclusive: false,
+                    autoDelete: false,
+                    arguments: null
                 );
 
-                if (message.ChatId == default && message.UserLogin != default) 
-                {
-                    // try to get chat id by user login
-                    
-                    MongoClient dbClient = new MongoClient(MongoConnectionString);
-                    IMongoDatabase db = dbClient.GetDatabase("bridge");
-                    var collection = db.GetCollection<BsonDocument>("tg_users_chats");
-                    var collectionFilter = new BsonDocument() {{"_id", message.UserLogin}};
-                    BsonDocument loginInfo = collection.Find(collectionFilter).FirstOrDefault();
+                var consumer = new EventingBasicConsumer(ChannelOut);
 
-                    if (loginInfo != null)
-                    {
-                        message.ChatId = loginInfo["chat_id"].AsString;
-                    }
-                    else 
-                    {
-                        log.Warn($"Chat not found by login {message.UserLogin}");
-                    }
-                }
+                consumer.Received += async(model, ea) => await OnBrokerMessage(ea);
 
-                if (message.ChatId == default) 
-                {
-                    log.Warn("Cannot send a message without chat id (it's required)");
-                    return;
-                }
-
-                await BotClient.SendTextMessageAsync(
-                    chatId: new Telegram.Bot.Types.ChatId(message.ChatId),
-                    text: message.Text
+                ChannelOut.BasicConsume(
+                    queue: _options.RabbitQueueOut,
+                    autoAck: false,
+                    consumer: consumer
                 );
-            };
 
-			ChannelOut.BasicConsume(
-				queue: QueueNameOut,
-                autoAck: true,
-                consumer: consumer
-			);
-
-
-            log.Debug("Connected to RabbitMQ out queue.");
+                
+                _logger.LogDebug("Connected to RabbitMQ out queue.");
+            } 
+            else
+            {
+                _logger.LogDebug("Connection to RabbitMQ out queue is already opened.");
+            } 
 
             ConnectToTelegram(cancellationToken);
         }
 
+        private async Task OnBrokerMessage(BasicDeliverEventArgs ea)
+        {   
+            receivedFromBroker.Inc();
+
+            _logger.LogDebug(
+                $"Received a packet from {_options.RabbitQueueOut}"
+            );
+
+            var body = ea.Body.ToArray();
+            var messageText = System.Text.Encoding.UTF8.GetString(body);
+            OutMessage message = JsonSerializer.Deserialize<OutMessage>(messageText);
+
+            _logger.LogDebug(
+                "Received a text message from RabbitMQ" +
+                $" ({message.Text}), chat {message.ChatId}, login {message.UserLogin}."
+            );
+
+            if (message.ChatId == default && message.UserLogin != default)
+            {
+                // try to get chat id by user login
+
+                MongoClient dbClient = new MongoClient(_options.MongoConnection);
+                IMongoDatabase db = dbClient.GetDatabase("bridge");
+                var collection = db.GetCollection<BsonDocument>("tg_users_chats");
+                var collectionFilter = new BsonDocument() { { "_id", message.UserLogin } };
+                BsonDocument loginInfo = collection.Find(collectionFilter).FirstOrDefault();
+
+                if (loginInfo != null)
+                {
+                    message.ChatId = loginInfo["chat_id"].AsString;
+                }
+                else
+                {
+                    _logger.LogWarning($"Chat isn't found by login {message.UserLogin}");
+
+                    // can't handle anyway
+                    ChannelOut.BasicAck(ea.DeliveryTag, multiple: false);
+                }
+            }
+
+            if (message.ChatId == default)
+            {
+                _logger.LogWarning("Cannot send a message without chat id (it's required)");
+                return;
+            }
+
+            await BotClient.SendTextMessageAsync(
+                chatId: new Telegram.Bot.Types.ChatId(message.ChatId),
+                text: message.Text
+            );
+
+            ChannelOut.BasicAck(ea.DeliveryTag, multiple: false);
+            sentToTelegram.Inc();
+        }
+
         public void Dispose()
         {
-            if (ChannelIn != null) 
+            if (ChannelIn != null)
             {
                 ChannelIn.Dispose();
                 ChannelIn = null;
             }
 
-            if (ConnectionOut != null) 
+            if (ConnectionOut != null)
             {
                 ConnectionOut.Dispose();
                 ConnectionOut = null;
             }
-            
-            if (BotClient != null) 
+
+            if (BotClient != null)
             {
                 BotClient.StopReceiving();
                 BotClient = null;
@@ -187,25 +289,28 @@ namespace TelegramBridge
 
         public async void HandleTelegramMessage(object sender, MessageEventArgs e)
         {
-            log.Debug(
-                "Received a text message from telegramm"+
+            receivedFromTelegram.Inc();
+
+            _logger.LogDebug(
+                "Received a text message from telegramm" +
                 $" ({e.Message.Text}) in chat {e.Message.Chat.Id}."
             );
 
 
             // save chat id to database to lookup chat id by user name
 
-            try 
+            try
             {
-                MongoClient dbClient = new MongoClient(MongoConnectionString);
+                MongoClient dbClient = new MongoClient(_options.MongoConnection);
                 IMongoDatabase db = dbClient.GetDatabase("bridge");
                 var collection = db.GetCollection<BsonDocument>("tg_users_chats");
-                var filter = new BsonDocument() {{"_id", e.Message.Chat.Username }};
+                var filter = new BsonDocument() { { "_id", e.Message.Chat.Username } };
                 var data = new BsonDocument() {
                     {"_id", e.Message.Chat.Username },
                     {"chat_id", e.Message.Chat.Id.ToString() }
                 };
-                var options = new ReplaceOptions() {
+                var options = new ReplaceOptions()
+                {
                     IsUpsert = true
                 };
                 await collection.ReplaceOneAsync(filter: filter, replacement: data, options: options);
@@ -224,28 +329,30 @@ namespace TelegramBridge
                 {
                     ChannelIn.BasicPublish(
                         exchange: "",
-                        routingKey: QueueNameIn,
+                        routingKey: _options.RabbitQueueIn,
                         basicProperties: null,
                         body: bytesMessage
                     );
+
+                    sentToBroker.Inc();
                 }
 
-                log.Debug(
-                    $"Sent message to {QueueNameIn}, "+
+                _logger.LogDebug(
+                    $"Sent message to {_options.RabbitQueueIn}, " +
                     $"json: {jsonMessage}."
                 );
 
                 await BotClient.SendTextMessageAsync(
                     chatId: e.Message.Chat,
-                    text: "Hi! I will answer you asap. "+ 
-                        $"({ChannelIn.ConsumerCount(QueueNameIn)} peer(s) online)"
+                    text: "Hi! I will answer you asap. " +
+                        $"({ChannelIn.ConsumerCount(_options.RabbitQueueIn)} peer(s) online)"
                 );
             }
-            catch (System.Exception exception) 
+            catch (System.Exception exception)
             {
-                log.Error(
-                    "Exception while handling telegram message", 
-                    exception.ToString()
+                _logger.LogError(
+                    exception, 
+                    "Exception while handling telegram message"
                 );
             }
         }

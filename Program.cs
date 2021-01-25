@@ -4,12 +4,13 @@ using System.CommandLine.Invocation;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Hosting;
 
 namespace TelegramBridge
 {
     class Program
     {
-        static int Main(string[] args)
+        static int Main2(string[] args)
         {// Create a root command with some options
             var rootCommand = new RootCommand
             {
@@ -38,39 +39,27 @@ namespace TelegramBridge
             {
                 Console.WriteLine($"The value for --telegram-token is: {telegramToken}");
 
-                var bridge = new Bridge(telegramToken, mongoConnection);
-                var cancellationTokenSource = new CancellationTokenSource();
                 
-                while(true)
-                {
-                    try 
-                    {
-                        Console.WriteLine($"Trying to connect to RabbitMQ ({rabbitHost})");
-
-                        bridge.ConnectTo(
-                            cancellationToken: cancellationTokenSource.Token, 
-                            rabbitMQHost: rabbitHost, 
-                            queueNameIn: rabbitQueueIn, 
-                            queueNameOut: rabbitQueueOut
-                        );
-                    } 
-                    // TODO: catch appropriate exception
-                    catch (System.Exception e)
-                    {
-                        Console.WriteLine($"RabbitMQ is unreachable (id:{rabbitHost})");
-                        await Task.Delay(1000);
-                        continue;
-                    }
-
-                    break;
-                }
-
-                while (Console.ReadLine() != "exit") { }
-                cancellationTokenSource.Cancel();
             });
 
             // Parse the incoming args and invoke the handler
             return rootCommand.InvokeAsync(args).Result;
         }
+
+
+        public static void Main(string[] args)
+        {
+            CreateHostBuilder(args).Build().Run();
+        }
+
+        public static IHostBuilder CreateHostBuilder(string[] args)
+        {
+            Host.CreateDefaultBuilder(args)
+                .ConfigureServices((hostContext, services) =>
+                {
+                    services.AddHostedService<Worker>();
+                });
+        }
+
     }
 }
