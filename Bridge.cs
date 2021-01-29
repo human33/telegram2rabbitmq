@@ -19,17 +19,26 @@ namespace TelegramBridge
     class Bridge : IDisposable, IHostedService
     {
         CancellationTokenSource workerCancellationTokenSource = new CancellationTokenSource();
-        private ILogger<Worker> _logger;
+        private ILogger<Bridge> _logger;
         private BridgeOptions _options;
+
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            workerCancellationTokenSource.Cancel();
+            return Task.CompletedTask;
+        }
 
         public Task StartAsync(CancellationToken cancellationToken)
         {
             return Task.Run(async () => 
-            {   
+            {
                 // try to connect in the loop
                 while(true)
                 {
-                    if (workerCancellationTokenSource.Token.IsCancellationRequested) 
+                    if (
+                        workerCancellationTokenSource.Token.IsCancellationRequested ||
+                        cancellationToken.IsCancellationRequested
+                    ) 
                     {
                         _logger.LogInformation("Cancellation reqiested, stopping...");
                         break;
@@ -40,10 +49,7 @@ namespace TelegramBridge
                         _logger.LogInformation($"Trying to connect to RabbitMQ ({_options.RabbitHost})");
 
                         this.ConnectTo(
-                            cancellationToken: cancellationToken, 
-                            rabbitMQHost: _options.RabbitHost, 
-                            queueNameIn: _options.RabbitQueueIn, 
-                            queueNameOut: _options.RabbitQueueOut
+                            cancellationToken: cancellationToken
                         );
                     }
                     catch (System.Exception e)
@@ -60,7 +66,7 @@ namespace TelegramBridge
 
         private Telegram.Bot.TelegramBotClient BotClient;
 
-        public Bridge(ILogger<Worker> logger, BridgeOptions options) 
+        public Bridge(ILogger<Bridge> logger, BridgeOptions options) 
         {
             _logger = logger;
             _options = options;
@@ -262,7 +268,11 @@ namespace TelegramBridge
                 text: message.Text
             );
 
-            ChannelOut.BasicAck(ea.DeliveryTag, multiple: false);
+            lock(ChannelOut) 
+            {
+                ChannelOut.BasicAck(ea.DeliveryTag, multiple: false);
+            }
+            
             sentToTelegram.Inc();
         }
 
@@ -338,14 +348,14 @@ namespace TelegramBridge
                 }
 
                 _logger.LogDebug(
-                    $"Sent message to {_options.RabbitQueueIn}, " +
+                    $"Sent a message to {_options.RabbitQueueIn}, " +
                     $"json: {jsonMessage}."
                 );
 
                 await BotClient.SendTextMessageAsync(
                     chatId: e.Message.Chat,
                     text: "Hi! I will answer you asap. " +
-                        $"({ChannelIn.ConsumerCount(_options.RabbitQueueIn)} peer(s) online)"
+                        $"({ChannelIn.ConsumerCount(_options.RabbitQueueIn)} peer(s) are online)"
                 );
             }
             catch (System.Exception exception)
@@ -356,5 +366,6 @@ namespace TelegramBridge
                 );
             }
         }
+
     }
 }

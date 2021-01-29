@@ -15,4 +15,6 @@ WORKDIR /app
 
 COPY --from=build-env /app/out .
 
+EXPOSE 9090
+
 ENTRYPOINT [ "dotnet", "telegramBridge.dll" ]
