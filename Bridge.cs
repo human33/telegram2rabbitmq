@@ -13,6 +13,7 @@ using Prometheus;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Threading.Tasks;
+using Telegram.Bot;
 
 namespace TelegramBridge
 {
@@ -92,6 +93,21 @@ namespace TelegramBridge
                 "bridge_sent_to_broker",
                 "Messages sent to broker's \"in\" queue"
             );
+
+            connectionInStatus = Metrics.CreateGauge(
+                "connection_in_status",
+                "In queue connections count"
+            );
+            
+            connectionOutStatus = Metrics.CreateGauge(
+                "connection_out_status",
+                "Out queue connections count"
+            );
+
+            telegrammConnectionStatus = Metrics.CreateGauge(
+                "telegramm_connection_status",
+                "Show connections to telegram"
+            );
         }
 
         private IConnection ConnectionIn { get; set; }
@@ -108,6 +124,9 @@ namespace TelegramBridge
         private bool SubscribedToTelegramNewMessage = false;
         private Counter receivedFromTelegram;
         private Counter sentToBroker;
+        private Gauge connectionInStatus;
+        private Gauge connectionOutStatus;
+        private Gauge telegrammConnectionStatus;
 
         protected void ConnectToTelegram(CancellationToken cancellationToken)
         {
@@ -124,10 +143,11 @@ namespace TelegramBridge
                     cancellationToken
                 );
 
+                telegrammConnectionStatus.Inc();
                 SubscribedToTelegramNewMessage = true;
                 _logger.LogDebug("Connected to Telegram.");
             }
-            else 
+            else
             {
                 _logger.LogDebug("Already connected to Telegram.");
             }
@@ -153,8 +173,11 @@ namespace TelegramBridge
                 
                 ConnectionIn = factory.CreateConnection();
 
-                ConnectionIn.ConnectionShutdown += (model, ea) => 
+                ConnectionIn.ConnectionShutdown += (model, ea) =>
+                {
+                    connectionInStatus.Dec();
                     ConnectTo(workerCancellationTokenSource.Token);
+                };
 
                 ChannelIn = ConnectionIn.CreateModel();
 
@@ -164,7 +187,9 @@ namespace TelegramBridge
                     exclusive: false,
                     autoDelete: false,
                     arguments: null
-                );
+                ); 
+                
+                connectionInStatus.Inc();
                 
                 _logger.LogDebug("Connected to RabbitMQ in queue.");
             }
@@ -183,8 +208,11 @@ namespace TelegramBridge
 
                 ConnectionOut = factory.CreateConnection();
 
-                ConnectionOut.ConnectionShutdown += (model, ea) => 
+                ConnectionOut.ConnectionShutdown += (model, ea) =>
+                {
+                    connectionOutStatus.Dec();
                     ConnectTo(workerCancellationTokenSource.Token);
+                };
 
                 ChannelOut = ConnectionOut.CreateModel();
 
@@ -196,6 +224,7 @@ namespace TelegramBridge
                     arguments: null
                 );
 
+                connectionOutStatus.Inc();   
                 var consumer = new EventingBasicConsumer(ChannelOut);
 
                 consumer.Received += async(model, ea) => await OnBrokerMessage(ea);
