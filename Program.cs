@@ -33,7 +33,8 @@ namespace TelegramBridge
                                 RabbitHost: config.GetValue<string>("Rabbit.Host"),
                                 RabbitQueueIn: config.GetValue<string>("Rabbit.QueueIn"),
                                 RabbitQueueOut: config.GetValue<string>("Rabbit.QueueOut"),
-                                MongoConnection: config.GetValue<string>("Mongo.Connection")
+                                MongoConnection: config.GetValue<string>("Mongo.Connection"),
+                                MongoDatabase: config.GetValue<string>("Mongo.Database")
                             );
                         }
                     );

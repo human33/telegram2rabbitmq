@@ -239,7 +239,7 @@ namespace TelegramBridge
                 // try to get chat id by user login
 
                 MongoClient dbClient = new MongoClient(_options.MongoConnection);
-                IMongoDatabase db = dbClient.GetDatabase("bridge");
+                IMongoDatabase db = dbClient.GetDatabase(_options.MongoDatabase);
                 var collection = db.GetCollection<BsonDocument>("tg_users_chats");
                 var collectionFilter = new BsonDocument() { { "_id", message.UserLogin } };
                 BsonDocument loginInfo = collection.Find(collectionFilter).FirstOrDefault();
@@ -312,7 +312,7 @@ namespace TelegramBridge
             try
             {
                 MongoClient dbClient = new MongoClient(_options.MongoConnection);
-                IMongoDatabase db = dbClient.GetDatabase("bridge");
+                IMongoDatabase db = dbClient.GetDatabase(_options.MongoDatabase);
                 var collection = db.GetCollection<BsonDocument>("tg_users_chats");
                 var filter = new BsonDocument() { { "_id", e.Message.Chat.Username } };
                 var data = new BsonDocument() {
