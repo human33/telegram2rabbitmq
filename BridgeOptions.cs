@@ -5,7 +5,8 @@ namespace TelegramBridge
         string RabbitUri, 
         string RabbitQueueIn, 
         string RabbitQueueOut, 
-        string MongoConnection
+        string MongoConnection,
+        string MongoDatabase
     )
     {
         // public string TelegramToken {get;set;}
