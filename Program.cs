@@ -30,7 +30,7 @@ namespace TelegramBridge
                             return new BridgeOptions
                             (
                                 TelegramToken: config.GetValue<string>("Telegram.Token"),
-                                RabbitHost: config.GetValue<string>("Rabbit.Host"),
+                                RabbitUri: config.GetValue<string>("Rabbit.Uri"),
                                 RabbitQueueIn: config.GetValue<string>("Rabbit.QueueIn"),
                                 RabbitQueueOut: config.GetValue<string>("Rabbit.QueueOut"),
                                 MongoConnection: config.GetValue<string>("Mongo.Connection")

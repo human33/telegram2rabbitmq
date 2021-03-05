@@ -47,7 +47,7 @@ namespace TelegramBridge
 
                     try 
                     {
-                        _logger.LogInformation($"Trying to connect to RabbitMQ ({_options.RabbitHost})");
+                        _logger.LogInformation($"Trying to connect to RabbitMQ ({_options.RabbitUri})");
 
                         this.ConnectTo(
                             cancellationToken: cancellationToken
@@ -55,7 +55,7 @@ namespace TelegramBridge
                     }
                     catch (System.Exception e)
                     {
-                        _logger.LogInformation(e, $"RabbitMQ is unreachable (id:{_options.RabbitHost})");
+                        _logger.LogInformation(e, $"RabbitMQ is unreachable (id:{_options.RabbitUri})");
                         await Task.Delay(1000);
                         continue;
                     }
@@ -164,7 +164,7 @@ namespace TelegramBridge
 
             // connect to RabbitMQ out queue
 
-            var factory = new ConnectionFactory() { HostName = _options.RabbitHost };
+            var factory = new ConnectionFactory() { Uri = new Uri(_options.RabbitUri) };
 
             if (ConnectionIn == null || !ConnectionIn.IsOpen || 
                 ChannelIn == null || !ChannelIn.IsOpen)

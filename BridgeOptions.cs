@@ -2,7 +2,7 @@ namespace TelegramBridge
 {
     public record BridgeOptions(
         string TelegramToken,
-        string RabbitHost, 
+        string RabbitUri, 
         string RabbitQueueIn, 
         string RabbitQueueOut, 
         string MongoConnection
