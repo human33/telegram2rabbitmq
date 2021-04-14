@@ -4,6 +4,7 @@ using System.CommandLine.Invocation;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using DotNext.Net.Cluster.Consensus.Raft.Http.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -22,26 +23,29 @@ namespace TelegramBridge
             return Host.CreateDefaultBuilder(args)
                 .ConfigureServices((hostContext, services) =>
                 {
-                    services.AddSingleton<BridgeOptions>(
+                    services.AddSingleton<TelegramBridge.BridgeOptions>(
                         (serviceProvider) => 
                         {
                             var config = hostContext.Configuration;
 
                             return new BridgeOptions
                             (
-                                TelegramToken: config.GetValue<string>("Telegram.Token"),
-                                RabbitUri: config.GetValue<string>("Rabbit.Uri"),
-                                RabbitQueueIn: config.GetValue<string>("Rabbit.QueueIn"),
-                                RabbitQueueOut: config.GetValue<string>("Rabbit.QueueOut"),
-                                MongoConnection: config.GetValue<string>("Mongo.Connection"),
-                                MongoDatabase: config.GetValue<string>("Mongo.Database")
+                                TelegramToken: config.GetValue<string>("Telegram:Token"),
+                                RabbitUri: config.GetValue<string>("Rabbit:Uri"),
+                                RabbitQueueIn: config.GetValue<string>("Rabbit:QueueIn"),
+                                RabbitQueueOut: config.GetValue<string>("Rabbit:QueueOut"),
+                                MongoConnection: config.GetValue<string>("Mongo:Connection"),
+                                MongoDatabase: config.GetValue<string>("Mongo:Database")
                             );
                         }
                     );
                     
                     services.AddHostedService<Bridge>();
                     services.AddHostedService<MetricsHostedService>();
+
+                    // todo: add a MetricsCollector inheritor to DI
                 });
+                // .JoinCluster(memberConfigSection: "Raft");
         }
 
     }
