@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using DotNext.Net.Cluster.Consensus.Raft;
+using DotNext.Net.Cluster.Consensus.Raft.Http.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -44,7 +45,8 @@ namespace TelegramBridge
                     services.AddHostedService<MetricsHostedService>();
 
                     services.AddSingleton<MetricsCollector, RaftToPrometheusMetricsCollector>();
-                });
+                })
+                .JoinCluster("Raft");
         }
 
     }
