@@ -25,14 +25,30 @@ namespace TelegramBridge.Telegram
         /// Gets new message and confirms the message with offset-1
         /// </summary>
         /// <returns></returns>
-        public async Task<Update> GetMessage(int offset, int timeout)
+        public async Task<Update> GetAndConfirmUpdateAsync(long? offset = null, long? timeout = null)
         {
-            var content = new FormUrlEncodedContent(new[]
+            byte argumentsLength = 1;
+            if (offset != null)
             {
-                new KeyValuePair<string, string>("offset", offset.ToString()),
-                new KeyValuePair<string, string>("limit", "1"),
-                new KeyValuePair<string, string>("timeout", timeout.ToString()),
-            });
+                argumentsLength += 1;
+            }
+            if (timeout != null)
+            {
+                argumentsLength += 1;
+            }
+
+            var requestBody = new KeyValuePair<string, string>[argumentsLength];
+            requestBody[0] = new KeyValuePair<string, string>("limit", "1");
+            if (offset != null)
+            {
+                requestBody[1] = new KeyValuePair<string, string>("offset", timeout.ToString());
+            }
+            if (timeout != null)
+            {
+                requestBody[2] = new KeyValuePair<string, string>("timeout", timeout.ToString());
+            }
+            
+            var content = new FormUrlEncodedContent(requestBody);
             var result = await _client.PostAsync($"/bot{_token}/getUpdates", content);
             string resultContent = await result.Content.ReadAsStringAsync();
 
@@ -47,13 +63,15 @@ namespace TelegramBridge.Telegram
                 return null;
             }
         }
+        
+        
 
         /// <summary>
         /// Sends the message to the Telegram
         /// </summary>
         /// <param name="message"></param>
         /// <returns></returns>
-        public async Task<Message> SendMessage(MessageToSend message)
+        public async Task<Message> SendMessageAsync(MessageToSend message)
         {
             var content = JsonContent.Create<MessageToSend>(message);
             var result = await _client.PostAsync($"/bot{_token}/sendMessage", content);

@@ -36,7 +36,8 @@ namespace TelegramBridge
                                 RabbitQueueIn: config.GetValue<string>("Rabbit:QueueIn"),
                                 RabbitQueueOut: config.GetValue<string>("Rabbit:QueueOut"),
                                 MongoConnection: config.GetValue<string>("Mongo:Connection"),
-                                MongoDatabase: config.GetValue<string>("Mongo:Database")
+                                MongoDatabase: config.GetValue<string>("Mongo:Database"),
+                                TelegramUpdateFrequencySec: config.GetValue<long>("Telegram:UpdateFrequencySec")
                             );
                         }
                     );

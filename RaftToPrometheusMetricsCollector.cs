@@ -54,9 +54,7 @@ namespace TelegramBridge
         public override void ReportHeartbeat()
         {
             base.ReportHeartbeat();
-            var unixEpoch = new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc);
-            var timestamp = (long)(DateTime.UtcNow - unixEpoch).TotalMilliseconds;
-            lastHeartBeat.Set(timestamp);
+            lastHeartBeat.SetToCurrentTimeUtc();
         }
     }
 }

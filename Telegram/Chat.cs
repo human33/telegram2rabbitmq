@@ -2,9 +2,8 @@ using System.Text.Json.Serialization;
 
 namespace TelegramBridge.Telegram
 {
-    public record Chat
-    {
-        [JsonPropertyName("id")]
-        public string Id { get; }
-    }
+    public record Chat(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("username")] string Username
+    );
 }

@@ -13,7 +13,10 @@ using Prometheus;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Threading.Tasks;
+using DotNext.Net.Cluster;
+using DotNext.Net.Cluster.Consensus.Raft;
 using Telegram.Bot;
+using TelegramBridge.Telegram;
 
 namespace TelegramBridge
 {
@@ -22,6 +25,7 @@ namespace TelegramBridge
         CancellationTokenSource workerCancellationTokenSource = new CancellationTokenSource();
         private ILogger<Bridge> _logger;
         private BridgeOptions _options;
+        private readonly IRaftCluster _cluster;
 
         public Task StopAsync(CancellationToken cancellationToken)
         {
@@ -29,10 +33,12 @@ namespace TelegramBridge
             return Task.CompletedTask;
         }
 
-        public Task StartAsync(CancellationToken cancellationToken)
+        public async Task StartAsync(CancellationToken cancellationToken)
         {
-            return Task.Run(async () => 
+            await Task.Run(async () =>
             {
+                int failureDelay = 1000;
+                
                 // try to connect in the loop
                 while(true)
                 {
@@ -55,23 +61,67 @@ namespace TelegramBridge
                     }
                     catch (System.Exception e)
                     {
-                        _logger.LogInformation(e, $"RabbitMQ is unreachable (id:{_options.RabbitUri})");
-                        await Task.Delay(1000);
+                        _logger.LogInformation(e, $"RabbitMQ is unreachable (id:{_options.RabbitUri}), wait {failureDelay} ms");
+                        await Task.Delay(millisecondsDelay: failureDelay, cancellationToken);
+                        failureDelay *= 2;
                         continue;
                     }
 
                     break;
                 }
-            });
+            }, cancellationToken);
+
+            _cluster.LeaderChanged += (cluster, leader) =>
+            {
+                // this process is the leader 
+                if (cluster.Leader is {IsRemote: false} &&
+                    workerCancellationTokenSource.Token.IsCancellationRequested == false)
+                {
+                    Task.Run(async () =>
+                    {
+                        Update updateToProcess = null;
+                        
+                        // while this process the leader && it's not stopping
+                        while (cluster.Leader is {IsRemote: false} && 
+                            workerCancellationTokenSource.Token.IsCancellationRequested == false)
+                        {
+                            if (updateToProcess != null && updateToProcess.Message != null)
+                            {
+                                try
+                                {
+                                    HandleTelegramMessage(updateToProcess.Message);
+                                }
+                                catch (System.Exception e)
+                                {
+                                    _logger.LogError(e, "Failed to handle telegram message");
+                                    
+                                    // keep processing messages
+                                    continue;
+                                }
+                            }
+                            
+                            // get the next message and confirm the last one
+                            updateToProcess = await BotClient.GetAndConfirmUpdateAsync(
+                                offset: updateToProcess?.UpdateId + 1,
+                                timeout: _options.TelegramUpdateFrequencySec
+                            );
+                            
+                            telegrammLastMessageReceived.SetToCurrentTimeUtc();
+                        }
+                        
+                    }, workerCancellationTokenSource.Token);
+                }
+            };
         }
 
         private Telegram.BotClient BotClient;
 
-        public Bridge(ILogger<Bridge> logger, BridgeOptions options) 
+        public Bridge(ILogger<Bridge> logger, BridgeOptions options, IRaftCluster cluster) 
         {
             _logger = logger;
             _options = options;
-            
+            _cluster = cluster;
+
             BotClient = new Telegram.BotClient(
                 telegramApiBaseAddress: "https://api.telegram.org", 
                 token: options.TelegramToken
@@ -80,6 +130,11 @@ namespace TelegramBridge
             receivedFromBroker = Metrics.CreateCounter(
                 "bridge_received_from_broker",
                 "Messages received from broker's \"out\" queue"
+            );
+            
+            receivedFromBrokerLast = Metrics.CreateGauge(
+                "bridge_received_from_broker_last",
+                "When the last message was received from broker's \"out\" queue"
             );
 
             sentToTelegram = Metrics.CreateCounter(
@@ -96,6 +151,11 @@ namespace TelegramBridge
                 "bridge_sent_to_broker",
                 "Messages sent to broker's \"in\" queue"
             );
+            
+            sentToBrokerLast = Metrics.CreateGauge(
+                "bridge_sent_to_broker_last",
+                "When the last message was sent to broker's \"in\" queue"
+            );
 
             connectionInStatus = Metrics.CreateGauge(
                 "connection_in_status",
@@ -107,9 +167,9 @@ namespace TelegramBridge
                 "Out queue connections count"
             );
 
-            telegrammConnectionStatus = Metrics.CreateGauge(
-                "telegramm_connection_status",
-                "Show connections to telegram"
+            telegrammLastMessageReceived = Metrics.CreateGauge(
+                "telegramm_last_message_received",
+                "When the last message was received"
             );
         }
 
@@ -124,12 +184,13 @@ namespace TelegramBridge
         private Counter receivedFromBroker;
         private Counter sentToTelegram;
 
-        private bool SubscribedToTelegramNewMessage = false;
         private Counter receivedFromTelegram;
         private Counter sentToBroker;
         private Gauge connectionInStatus;
         private Gauge connectionOutStatus;
-        private Gauge telegrammConnectionStatus;
+        private Gauge telegrammLastMessageReceived;
+        private readonly Gauge receivedFromBrokerLast;
+        private readonly Gauge sentToBrokerLast;
 
 
         // TODO: reconnect in case of network failure
@@ -219,15 +280,14 @@ namespace TelegramBridge
             else
             {
                 _logger.LogDebug("Connection to RabbitMQ out queue is already opened.");
-            } 
-
-            // todo: make requests for new message in a loop and confirm them once they are handled
-            ConnectToTelegram(cancellationToken);
+            }
         }
 
         private async Task OnBrokerMessage(BasicDeliverEventArgs ea)
         {
             receivedFromBroker.Inc();
+            
+            receivedFromBrokerLast.SetToCurrentTimeUtc();
 
             _logger.LogDebug(
                 $"Received a packet from {_options.RabbitQueueOut}"
@@ -271,9 +331,12 @@ namespace TelegramBridge
                 return;
             }
 
-            await BotClient.SendTextMessageAsync(
-                chatId: new Telegram.Bot.Types.ChatId(message.ChatId),
-                text: message.Text
+            await BotClient.SendMessageAsync(
+                new MessageToSend
+                (
+                    ChatId: message.ChatId,
+                    Text: message.Text
+                )
             );
 
             lock(ChannelOut) 
@@ -297,24 +360,15 @@ namespace TelegramBridge
                 ConnectionOut.Dispose();
                 ConnectionOut = null;
             }
-
-            if (BotClient != null)
-            {
-                if (SubscribedToTelegramNewMessage)
-                {
-                    BotClient.StopReceiving();
-                }
-                BotClient = null;
-            }
         }
 
-        public async void HandleTelegramMessage(object sender, MessageEventArgs e)
+        public async void HandleTelegramMessage(Message message)
         {
             receivedFromTelegram.Inc();
 
             _logger.LogDebug(
                 "Received a text message from telegramm" +
-                $" ({e.Message.Text}) in chat {e.Message.Chat.Id}."
+                $" ({message.Text}) in chat {message.Chat.Id}."
             );
 
             
@@ -335,10 +389,10 @@ namespace TelegramBridge
                 MongoClient dbClient = new MongoClient(_options.MongoConnection);
                 IMongoDatabase db = dbClient.GetDatabase(_options.MongoDatabase);
                 var collection = db.GetCollection<BsonDocument>("tg_users_chats");
-                var filter = new BsonDocument() { { "_id", e.Message.Chat.Username } };
+                var filter = new BsonDocument() { { "_id", message.Chat.Username } };
                 var data = new BsonDocument() {
-                    {"_id", e.Message.Chat.Username },
-                    {"chat_id", e.Message.Chat.Id.ToString() }
+                    {"_id", message.Chat.Username },
+                    {"chat_id", message.Chat.Id }
                 };
                 var options = new ReplaceOptions()
                 {
@@ -348,12 +402,12 @@ namespace TelegramBridge
 
 
 
-                var message = new InMessage(
-                    text: e.Message.Text,
-                    chatId: e.Message.Chat.Id.ToString(),
-                    userLogin: e.Message.Chat.Username
+                var inMessage = new InMessage(
+                    text: message.Text,
+                    chatId: message.Chat.Id,
+                    userLogin: message.Chat.Username
                 );
-                string jsonMessage = JsonSerializer.Serialize(message);
+                string jsonMessage = JsonSerializer.Serialize(inMessage);
                 byte[] bytesMessage = System.Text.Encoding.UTF8.GetBytes(jsonMessage);
 
                 lock (ChannelIn)
@@ -366,6 +420,7 @@ namespace TelegramBridge
                     );
 
                     sentToBroker.Inc();
+                    sentToBrokerLast.SetToCurrentTimeUtc();
                 }
 
                 _logger.LogDebug(
@@ -373,10 +428,12 @@ namespace TelegramBridge
                     $"json: {jsonMessage}."
                 );
 
-                await BotClient.SendTextMessageAsync(
-                    chatId: e.Message.Chat,
-                    text: "Hi! I will answer you asap. " +
-                        $"({ChannelIn.ConsumerCount(_options.RabbitQueueIn)} peer(s) are online)"
+                await BotClient.SendMessageAsync(
+                    new MessageToSend(
+                        ChatId: message.Chat.Id,
+                        Text: "Hi! I will answer you asap. " +
+                            $"({ChannelIn.ConsumerCount(_options.RabbitQueueIn)} peer(s) are online)"
+                    ) 
                 );
             }
             catch (System.Exception exception)
