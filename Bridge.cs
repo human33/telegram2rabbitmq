@@ -111,7 +111,10 @@ namespace TelegramBridge
                         }
 
                         // get the next message and confirm the last one
-                        updateToProcess = await BotClient.GetAndConfirmUpdateAsync(offset: updateToProcess?.UpdateId + 1, timeout: _options.TelegramUpdateFrequencySec);
+                        updateToProcess = await BotClient.GetAndConfirmUpdateAsync(
+                            offset: updateToProcess == null ? null : updateToProcess.UpdateId + 1, 
+                            timeout: _options.TelegramUpdateFrequencySec
+                        );
 
                         telegrammLastMessageReceived.SetToCurrentTimeUtc();
                     }
