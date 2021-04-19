@@ -65,14 +65,17 @@ namespace TelegramBridge
             });
         }
 
-        private Telegram.Bot.TelegramBotClient BotClient;
+        private Telegram.BotClient BotClient;
 
         public Bridge(ILogger<Bridge> logger, BridgeOptions options) 
         {
             _logger = logger;
             _options = options;
             
-            BotClient = new Telegram.Bot.TelegramBotClient(_options.TelegramToken);
+            BotClient = new Telegram.BotClient(
+                telegramApiBaseAddress: "https://api.telegram.org", 
+                token: options.TelegramToken
+            );
 
             receivedFromBroker = Metrics.CreateCounter(
                 "bridge_received_from_broker",
@@ -127,31 +130,6 @@ namespace TelegramBridge
         private Gauge connectionInStatus;
         private Gauge connectionOutStatus;
         private Gauge telegrammConnectionStatus;
-
-        protected void ConnectToTelegram(CancellationToken cancellationToken)
-        {
-            if (!SubscribedToTelegramNewMessage)
-            {
-                _logger.LogDebug("Trying to connect to telegramm...");
-
-                // listen to telegram messages
-                BotClient.OnMessage += HandleTelegramMessage;
-
-                BotClient.StartReceiving(
-                    // Telegram.Bot.Types.Enums.UpdateType.Message,
-                    null,
-                    cancellationToken
-                );
-
-                telegrammConnectionStatus.Inc();
-                SubscribedToTelegramNewMessage = true;
-                _logger.LogDebug("Connected to Telegram.");
-            }
-            else
-            {
-                _logger.LogDebug("Already connected to Telegram.");
-            }
-        }
 
 
         // TODO: reconnect in case of network failure
@@ -243,11 +221,12 @@ namespace TelegramBridge
                 _logger.LogDebug("Connection to RabbitMQ out queue is already opened.");
             } 
 
+            // todo: make requests for new message in a loop and confirm them once they are handled
             ConnectToTelegram(cancellationToken);
         }
 
         private async Task OnBrokerMessage(BasicDeliverEventArgs ea)
-        {   
+        {
             receivedFromBroker.Inc();
 
             _logger.LogDebug(
@@ -338,6 +317,16 @@ namespace TelegramBridge
                 $" ({e.Message.Text}) in chat {e.Message.Chat.Id}."
             );
 
+            
+            // Ensure uniqueness of messages in the outgoing queue
+            
+            // write message id to mongo with initial state
+            // try to send the message to rabbit mq
+            // if it's ok
+                // update message state to 'sent' or something
+                // confirm message in telegram to stop receiving it in further updates
+            
+            
 
             // save chat id to database to lookup chat id by user name
 
