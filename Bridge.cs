@@ -71,50 +71,52 @@ namespace TelegramBridge
                 }
             }, cancellationToken);
 
-            _cluster.LeaderChanged += (cluster, leader) =>
+            _cluster.LeaderChanged += HandleLeaderChange;
+            
+            // if the leader is known
+            if (_cluster.Leader != null)
             {
-                // this process is the leader 
-                
-                if (cluster.Leader is {IsRemote: false} &&
-                    workerCancellationTokenSource.Token.IsCancellationRequested == false)
+                HandleLeaderChange(_cluster, _cluster.Leader);             
+            }
+        }
+
+        private void HandleLeaderChange(ICluster cluster, IClusterMember? leader)
+        {
+            // this process is the leader 
+
+            if (cluster.Leader is {IsRemote: false} && workerCancellationTokenSource.Token.IsCancellationRequested == false)
+            {
+                _logger.LogInformation($"Leader process changed to current process");
+
+                Task.Run(async () =>
                 {
-                    _logger.LogInformation($"Leader process changed to current process");
-                
-                    Task.Run(async () =>
+                    Update updateToProcess = null;
+
+                    // while this process the leader && it's not stopping
+                    while (cluster.Leader is {IsRemote: false} && workerCancellationTokenSource.Token.IsCancellationRequested == false)
                     {
-                        Update updateToProcess = null;
-                        
-                        // while this process the leader && it's not stopping
-                        while (cluster.Leader is {IsRemote: false} && 
-                            workerCancellationTokenSource.Token.IsCancellationRequested == false)
+                        if (updateToProcess != null && updateToProcess.Message != null)
                         {
-                            if (updateToProcess != null && updateToProcess.Message != null)
+                            try
                             {
-                                try
-                                {
-                                    HandleTelegramMessage(updateToProcess.Message);
-                                }
-                                catch (System.Exception e)
-                                {
-                                    _logger.LogError(e, "Failed to handle telegram message");
-                                    
-                                    // keep processing messages
-                                    continue;
-                                }
+                                HandleTelegramMessage(updateToProcess.Message);
                             }
-                            
-                            // get the next message and confirm the last one
-                            updateToProcess = await BotClient.GetAndConfirmUpdateAsync(
-                                offset: updateToProcess?.UpdateId + 1,
-                                timeout: _options.TelegramUpdateFrequencySec
-                            );
-                            
-                            telegrammLastMessageReceived.SetToCurrentTimeUtc();
+                            catch (System.Exception e)
+                            {
+                                _logger.LogError(e, "Failed to handle telegram message");
+
+                                // keep processing messages
+                                continue;
+                            }
                         }
-                        
-                    }, workerCancellationTokenSource.Token);
-                }
-            };
+
+                        // get the next message and confirm the last one
+                        updateToProcess = await BotClient.GetAndConfirmUpdateAsync(offset: updateToProcess?.UpdateId + 1, timeout: _options.TelegramUpdateFrequencySec);
+
+                        telegrammLastMessageReceived.SetToCurrentTimeUtc();
+                    }
+                }, workerCancellationTokenSource.Token);
+            }
         }
 
         private Telegram.BotClient BotClient;
