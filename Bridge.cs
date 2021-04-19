@@ -321,7 +321,10 @@ namespace TelegramBridge
 
             if (BotClient != null)
             {
-                BotClient.StopReceiving();
+                if (SubscribedToTelegramNewMessage)
+                {
+                    BotClient.StopReceiving();
+                }
                 BotClient = null;
             }
         }
