@@ -16,6 +16,8 @@ namespace TelegramBridge
                 "Node state in the Raft cluster (0 - undefined, 1 - follower, 2 - candidate, 3 - leader)"
             );
             
+            stateInCluster.Set(1);
+            
             lastHeartBeat = Prometheus.Metrics.CreateGauge(
                 "raft_last_heart_beat",
                 "When the last heartbeat was seen (It's a milliseconds timestamp)"

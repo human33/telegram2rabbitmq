@@ -47,13 +47,13 @@ namespace TelegramBridge
                         cancellationToken.IsCancellationRequested
                     ) 
                     {
-                        _logger.LogInformation("Cancellation reqiested, stopping...");
+                        _logger.LogInformation("Cancellation requested, stopping...");
                         break;
                     }
 
                     try 
                     {
-                        _logger.LogInformation($"Trying to connect to RabbitMQ ({_options.RabbitUri})");
+                        _logger.LogInformation($"Trying to connect to RabbitMQ");
 
                         this.ConnectTo(
                             cancellationToken: cancellationToken
@@ -74,9 +74,12 @@ namespace TelegramBridge
             _cluster.LeaderChanged += (cluster, leader) =>
             {
                 // this process is the leader 
+                
                 if (cluster.Leader is {IsRemote: false} &&
                     workerCancellationTokenSource.Token.IsCancellationRequested == false)
                 {
+                    _logger.LogInformation($"Leader process changed to current process");
+                
                     Task.Run(async () =>
                     {
                         Update updateToProcess = null;
@@ -230,11 +233,11 @@ namespace TelegramBridge
                 
                 connectionInStatus.Inc();
                 
-                _logger.LogDebug("Connected to RabbitMQ in queue.");
+                _logger.LogInformation("Connected to RabbitMQ in queue.");
             }
             else 
             {
-                _logger.LogDebug("Connection to RabbitMQ in queue is already opened.");
+                _logger.LogWarning("Connection to RabbitMQ in queue is already opened.");
             }
 
 
@@ -275,76 +278,82 @@ namespace TelegramBridge
                 );
 
                 
-                _logger.LogDebug("Connected to RabbitMQ out queue.");
+                _logger.LogInformation("Connected to RabbitMQ out queue.");
             } 
             else
             {
-                _logger.LogDebug("Connection to RabbitMQ out queue is already opened.");
+                _logger.LogWarning("Connection to RabbitMQ out queue is already opened.");
             }
         }
 
         private async Task OnBrokerMessage(BasicDeliverEventArgs ea)
         {
-            receivedFromBroker.Inc();
-            
-            receivedFromBrokerLast.SetToCurrentTimeUtc();
-
-            _logger.LogDebug(
-                $"Received a packet from {_options.RabbitQueueOut}"
-            );
-
-            var body = ea.Body.ToArray();
-            var messageText = System.Text.Encoding.UTF8.GetString(body);
-            OutMessage message = JsonSerializer.Deserialize<OutMessage>(messageText);
-
-            _logger.LogDebug(
-                "Received a text message from RabbitMQ" +
-                $" ({message.Text}), chat {message.ChatId}, login {message.UserLogin}."
-            );
-
-            if (message.ChatId == default && message.UserLogin != default)
+            try
             {
-                // try to get chat id by user login
+                receivedFromBroker.Inc();
+                receivedFromBrokerLast.SetToCurrentTimeUtc();
 
-                MongoClient dbClient = new MongoClient(_options.MongoConnection);
-                IMongoDatabase db = dbClient.GetDatabase(_options.MongoDatabase);
-                var collection = db.GetCollection<BsonDocument>("tg_users_chats");
-                var collectionFilter = new BsonDocument() { { "_id", message.UserLogin } };
-                BsonDocument loginInfo = collection.Find(collectionFilter).FirstOrDefault();
+                _logger.LogDebug(
+                    $"Received a packet from {_options.RabbitQueueOut}"
+                );
 
-                if (loginInfo != null)
+                var body = ea.Body.ToArray();
+                var messageText = System.Text.Encoding.UTF8.GetString(body);
+                OutMessage message = JsonSerializer.Deserialize<OutMessage>(messageText);
+
+                _logger.LogDebug(
+                    "Received a text message from RabbitMQ" +
+                    $" ({message.Text}), chat {message.ChatId}, login {message.UserLogin}."
+                );
+
+                if (message.ChatId == default && message.UserLogin != default)
                 {
-                    message.ChatId = loginInfo["chat_id"].AsString;
+                    // try to get chat id by user login
+
+                    MongoClient dbClient = new MongoClient(_options.MongoConnection);
+                    IMongoDatabase db = dbClient.GetDatabase(_options.MongoDatabase);
+                    var collection = db.GetCollection<BsonDocument>("tg_users_chats");
+                    var collectionFilter = new BsonDocument() {{"_id", message.UserLogin}};
+                    BsonDocument loginInfo = collection.Find(collectionFilter).FirstOrDefault();
+
+                    if (loginInfo != null)
+                    {
+                        message.ChatId = loginInfo["chat_id"].AsString;
+                    }
+                    else
+                    {
+                        _logger.LogWarning($"Chat isn't found by login {message.UserLogin}");
+
+                        // can't handle anyway
+                        ChannelOut.BasicAck(ea.DeliveryTag, multiple: false);
+                    }
                 }
-                else
-                {
-                    _logger.LogWarning($"Chat isn't found by login {message.UserLogin}");
 
-                    // can't handle anyway
+                if (message.ChatId == default)
+                {
+                    _logger.LogWarning("Cannot send a message without chat id (it's required)");
+                    return;
+                }
+
+                await BotClient.SendMessageAsync(
+                    new MessageToSend
+                    (
+                        ChatId: message.ChatId,
+                        Text: message.Text
+                    )
+                );
+
+                lock (ChannelOut)
+                {
                     ChannelOut.BasicAck(ea.DeliveryTag, multiple: false);
                 }
-            }
 
-            if (message.ChatId == default)
+                sentToTelegram.Inc();
+            }
+            catch (System.Exception e)
             {
-                _logger.LogWarning("Cannot send a message without chat id (it's required)");
-                return;
+                _logger.LogError(e, "Unable to process message from RabbitMQ out(to telegram) queue");
             }
-
-            await BotClient.SendMessageAsync(
-                new MessageToSend
-                (
-                    ChatId: message.ChatId,
-                    Text: message.Text
-                )
-            );
-
-            lock(ChannelOut) 
-            {
-                ChannelOut.BasicAck(ea.DeliveryTag, multiple: false);
-            }
-            
-            sentToTelegram.Inc();
         }
 
         public void Dispose()
