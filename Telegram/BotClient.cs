@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
 namespace TelegramBridge.Telegram
@@ -56,15 +57,24 @@ namespace TelegramBridge.Telegram
             var result = await _client.PostAsync($"/bot{_token}/getUpdates", content);
             string resultContent = await result.Content.ReadAsStringAsync();
 
-            List<Update> updates = System.Text.Json.JsonSerializer.Deserialize<List<Update>>(resultContent);
+            var answer = System.Text.Json.JsonSerializer.Deserialize<ApiAnswer<List<Update>>>(resultContent);
 
-            if (updates != null && updates.Count > 0)
+            if (answer != null && answer.Ok)
             {
-                return updates.First();
+                List<Update> updates = answer.Result;
+                
+                if (updates is {Count: > 0})
+                {
+                    return updates.First();
+                }
+                else
+                {
+                    return null;
+                }
             }
             else
             {
-                return null;
+                throw new ExternalException("Telegram api returned error: " + resultContent);
             }
         }
         
