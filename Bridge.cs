@@ -105,16 +105,26 @@ namespace TelegramBridge
                             {
                                 _logger.LogError(e, "Failed to handle telegram message");
 
-                                // keep processing messages
-                                continue;
+                                // stop at this point
+                                return;
                             }
                         }
 
-                        // get the next message and confirm the last one
-                        updateToProcess = await BotClient.GetAndConfirmUpdateAsync(
-                            offset: updateToProcess == null ? null : updateToProcess.UpdateId + 1, 
-                            timeout: _options.TelegramUpdateFrequencySec
-                        );
+                        try
+                        {
+                            // get the next message and confirm the last one
+                            updateToProcess = await BotClient.GetAndConfirmUpdateAsync(
+                                offset: updateToProcess == null ? null : updateToProcess.UpdateId + 1,
+                                timeout: _options.TelegramUpdateFrequencySec
+                            );
+                        }
+                        catch (System.Exception e)
+                        {
+                            _logger.LogError(e, "Unable to load the next update from telegram");
+                            
+                            // need to stop at this point
+                            return;
+                        }
 
                         telegrammLastMessageReceived.SetToCurrentTimeUtc();
                     }

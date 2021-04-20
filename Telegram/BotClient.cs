@@ -38,14 +38,18 @@ namespace TelegramBridge.Telegram
             }
 
             var requestBody = new KeyValuePair<string, string>[argumentsLength];
-            requestBody[0] = new KeyValuePair<string, string>("limit", "1");
+            argumentsLength -= 1;
+            requestBody[argumentsLength] = new KeyValuePair<string, string>("limit", "1");
+            
             if (offset != null)
             {
-                requestBody[1] = new KeyValuePair<string, string>("offset", timeout.ToString());
+                argumentsLength -= 1;
+                requestBody[argumentsLength] = new KeyValuePair<string, string>("offset", timeout.ToString());
             }
             if (timeout != null)
             {
-                requestBody[2] = new KeyValuePair<string, string>("timeout", timeout.ToString());
+                argumentsLength -= 1;
+                requestBody[argumentsLength] = new KeyValuePair<string, string>("timeout", timeout.ToString());
             }
             
             var content = new FormUrlEncodedContent(requestBody);
