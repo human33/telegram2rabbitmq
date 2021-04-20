@@ -45,7 +45,7 @@ namespace TelegramBridge.Telegram
             if (offset != null)
             {
                 argumentsLength -= 1;
-                requestBody[argumentsLength] = new KeyValuePair<string, string>("offset", timeout.ToString());
+                requestBody[argumentsLength] = new KeyValuePair<string, string>("offset", offset.ToString());
             }
             if (timeout != null)
             {

@@ -392,10 +392,10 @@ namespace TelegramBridge
 
             _logger.LogDebug(
                 "Received a text message from telegramm" +
-                $" ({message.Text}) in chat {message.Chat.Id}."
+                $" ({message.Text}) in chat {message.Chat?.Id.ToString() ?? "null"}."
             );
 
-            
+
             // Ensure uniqueness of messages in the outgoing queue
             
             // write message id to mongo with initial state
@@ -428,7 +428,7 @@ namespace TelegramBridge
 
                 var inMessage = new InMessage(
                     text: message.Text,
-                    chatId: message.Chat.Id,
+                    chatId: message.Chat.Id.ToString(),
                     userLogin: message.Chat.Username
                 );
                 string jsonMessage = JsonSerializer.Serialize(inMessage);
@@ -454,7 +454,7 @@ namespace TelegramBridge
 
                 await BotClient.SendMessageAsync(
                     new MessageToSend(
-                        ChatId: message.Chat.Id,
+                        ChatId: message.Chat.Id.ToString(),
                         Text: "Hi! I will answer you asap. " +
                             $"({ChannelIn.ConsumerCount(_options.RabbitQueueIn)} peer(s) are online)"
                     ) 
